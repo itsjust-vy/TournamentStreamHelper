@@ -1467,18 +1467,29 @@ class ParryGGDataProvider(TournamentDataProvider):
             # Sets keyed by signed round number (positive=winners, negative=losers),
             # matching start.gg's convention.
             sets_by_round = {}
+
+            # Start queue from last winners side match(es).
+            matches_by_id = {match.id: match for match in bracket.matches}
+            max_winners_round = max(m.round for m in bracket.matches if m.winners_side)
+            max_losers_round = max(m.round for m in bracket.matches if not m.winners_side)
+            min_losers_round = min(m.round for m in bracket.matches if not m.winners_side)
+            queue = deque(
+                m for m in bracket.matches
+                if (m.winners_side and m.round == max_winners_round)
+                or (not m.winners_side and m.round == max_losers_round)
+            )
+            visited = set()
             
             # Offset losers round numbers.
             n = len(bracket.seeds)
             real_losers = len(set(m.round for m in bracket.matches if not m.winners_side and not m.grand_finals))
             total_losers = 2 * math.ceil(math.log2(n))
-            losers_offset = total_losers - real_losers
-
-            # Start queue from last winners side match.
-            matches_by_id = {match.id: match for match in bracket.matches}
-            start_match = max((m for m in bracket.matches if m.winners_side), key=lambda m: m.round)
-            queue = deque([start_match])
-            visited = set()
+            if any(s.HasField("progression") for s in bracket.seeds):
+                losers_offset = -min_losers_round + 1
+                winners_offset = 1
+            else:
+                losers_offset = total_losers - real_losers
+                winners_offset = 0
 
             bye = {"score": [0, -1], "finished": True,}
 
@@ -1488,7 +1499,7 @@ class ParryGGDataProvider(TournamentDataProvider):
                     continue
                 visited.add(match.id)
 
-                round_key = str(match.round if match.winners_side else -match.round - losers_offset)
+                round_key = str(match.round + winners_offset if match.winners_side else -match.round - losers_offset)
                 sets_by_round.setdefault(round_key, []).append({
                     "score": [
                         int(match.slots[0].score) if len(match.slots) > 0 and match.slots[0].state == SlotState.SLOT_STATE_NUMERIC else -1,
@@ -1497,10 +1508,10 @@ class ParryGGDataProvider(TournamentDataProvider):
                     "finished": match.state == MatchState.MATCH_STATE_COMPLETED,
                 })
 
-                if hasattr(match, 'prev_match_id_2') and match.prev_match_id_2:
+                if hasattr(match, 'prev_match_id_2') and match.prev_match_id_2 and match.prev_match_id_2 in matches_by_id:
                     queue.append(matches_by_id[match.prev_match_id_2])
 
-                    if hasattr(match, 'prev_match_id_1') and match.prev_match_id_1:
+                    if hasattr(match, 'prev_match_id_1') and match.prev_match_id_1 and match.prev_match_id_1 in matches_by_id:
                         queue.append(matches_by_id[match.prev_match_id_1])
                     else:
                         sets_by_round.setdefault(str(match.round - 1 if match.winners_side else -match.round - losers_offset + 1), []).append(bye)
